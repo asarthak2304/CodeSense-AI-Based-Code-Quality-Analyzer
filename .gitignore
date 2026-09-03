@@ -1,0 +1,21 @@
+# Environment & Secrets
+.env
+.streamlit/secrets.toml
+venv/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# ML Model Binary
+models/*.pkl
+
+# SQLite Database & Runtime Files
+*.db
+*.db-wal
+*.db-shm
+
+# Caches & Logs
+cache/
+logs/
+.pytest_cache/

@@ -19,3 +19,4 @@ models/*.pkl
 cache/
 logs/
 .pytest_cache/
+codesense_audit.md

@@ -43,8 +43,8 @@ ALGORITHM_PATTERNS: List[Tuple[str, str, str, List[str], str]] = [
     ("bubble_sort", "Bubble Sort", "Sorting",
      [r"def\s+(?:bubble_sort|bubblesort)\b",
       r"bubble.*sort",
-      r"for.+for.+if.*\[.*\]\s*>\s*\[.*\].*swap|temp",
-      r"for\s+\w+.*range.*for\s+\w+.*range.*>\s*\w+.*=\s*\w+.*="],
+      r"for\s+\w+\s+in\s+range.*?for\s+\w+\s+in\s+range",
+      r"for\s+\w+.*?for\s+\w+.*?if\s+\w+\[\w+\].*?>"],
      "Nested loops with element comparison and swap — classic Bubble Sort pattern."),
 
     ("selection_sort", "Selection Sort", "Sorting",
@@ -379,11 +379,21 @@ class DSADetector:
                             first_line = i
                         break
 
-            if hit_count == 0:
-                # Try whole-code match for multi-line patterns
-                for pattern in patterns:
-                    if re.search(pattern, code, re.IGNORECASE | re.DOTALL):
-                        hit_count += 1
+            if hit_count == 0 and len(lines) > 1:
+                # Check sliding windows of 25 lines to prevent multiline ReDoS on long files
+                window_size = 25
+                for w_idx in range(0, len(lines), 12):
+                    chunk = "\n".join(lines[w_idx:w_idx + window_size])
+                    for pattern in patterns:
+                        try:
+                            if re.search(pattern, chunk, re.IGNORECASE):
+                                hit_count += 1
+                                if first_line == 0:
+                                    first_line = w_idx + 1
+                                break
+                        except Exception:
+                            pass
+                    if hit_count > 0:
                         break
 
             if hit_count > 0:

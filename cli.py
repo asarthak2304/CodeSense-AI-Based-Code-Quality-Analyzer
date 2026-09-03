@@ -10,7 +10,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Ensure UTF-8 output across Windows, Linux, macOS
 if hasattr(sys.stdout, "reconfigure"):
@@ -24,7 +24,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from analyzer import StaticAnalyzer
 from dsa_detector import DSADetector
 from features import FeatureExtractor
-from train_model import QualityPredictor, calculate_contextual_adjustments, score_to_grade, score_to_label
+from train_model import (
+    get_predictor, QualityPredictor, calculate_contextual_adjustments,
+    score_to_grade, score_to_label,
+)
 from syntax_analyzer import SyntaxAnalyzer
 from semantic_analyzer import SemanticAnalyzer
 from context_engine import ContextEngine
@@ -34,13 +37,29 @@ from utils import detect_language_from_code, results_to_markdown, results_to_jso
 from validators import validate_code, sanitize_code
 from constants import SEVERITY_CRITICAL, SEVERITY_HIGH
 
+_STATIC = StaticAnalyzer()
+_DSA = DSADetector()
+_FEAT = FeatureExtractor()
+_SYNTAX = SyntaxAnalyzer()
+_SEMANTIC = SemanticAnalyzer()
+_CONTEXT = ContextEngine()
+_FIXER = CodeFixer()
+_FEEDBACK = FeedbackEngine()
 
-def analyze_single_file(file_path: Path, language: str = None) -> Dict[str, Any]:
-    """Analyze a single source code file."""
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
 
-    code = file_path.read_text(encoding="utf-8", errors="replace")
+def analyze_single_file(file_path: Path, language: Optional[str] = None) -> Dict[str, Any]:
+    """Run full CodeSense pipeline on a single source code file."""
+    try:
+        code = file_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        return {
+            "filename": str(file_path),
+            "language": language or "unknown",
+            "error": f"Failed to read file: {exc}",
+            "score": 0.0,
+            "grade": "F",
+        }
+
     code = sanitize_code(code)
     
     if not language:
@@ -57,26 +76,18 @@ def analyze_single_file(file_path: Path, language: str = None) -> Dict[str, Any]
             "grade": "F",
         }
 
-    static = StaticAnalyzer()
-    dsa_det = DSADetector()
-    feat_ext = FeatureExtractor()
-    syntax_an = SyntaxAnalyzer()
-    semantic_an = SemanticAnalyzer()
-    ctx_eng = ContextEngine()
-    fixer = CodeFixer()
-    feedback_eng = FeedbackEngine()
-    predictor = QualityPredictor()
+    predictor = get_predictor()
     predictor.ensure_model()
 
     with Timer() as t:
-        syntax = syntax_an.analyze(code, language)
-        semantic = semantic_an.analyze(code, language)
-        analysis = static.analyze(code, language)
-        dsa = dsa_det.detect(code, language)
-        context = ctx_eng.analyze(code, language, file_path.name, analysis)
+        syntax = _SYNTAX.analyze(code, language)
+        semantic = _SEMANTIC.analyze(code, language)
+        analysis = _STATIC.analyze(code, language)
+        dsa = _DSA.detect(code, language)
+        context = _CONTEXT.analyze(code, language, file_path.name, analysis)
 
-        feat_dict = feat_ext.extract(code, language, analysis, dsa)
-        feat_array = feat_ext.to_array(feat_dict)
+        feat_dict = _FEAT.extract(code, language, analysis, dsa)
+        feat_array = _FEAT.to_array(feat_dict)
 
         ctx_adj = calculate_contextual_adjustments(analysis, dsa, language)
         sem_err_count = sum(1 for i in semantic.get("issues", []) if i.get("severity") in ("WARNING", "ERROR"))
@@ -89,13 +100,13 @@ def analyze_single_file(file_path: Path, language: str = None) -> Dict[str, Any]
         grade = score_to_grade(ml_score)
         label = score_to_label(ml_score)
 
-        fixes = fixer.suggest_fixes(
+        fixes = _FIXER.suggest_fixes(
             code, language,
             semantic.get("issues", []),
             analysis.get("security", {}).get("findings", []),
         )
 
-        feedback = feedback_eng.generate(
+        feedback = _FEEDBACK.generate(
             code=code, language=language, score=ml_score, grade=grade,
             analysis=analysis, dsa=dsa, syntax=syntax, semantic=semantic,
             fixes=fixes, context=context, level="intermediate",
@@ -202,12 +213,23 @@ def main():
         print(f"Error: Path '{args.path}' does not exist.", file=sys.stderr)
         sys.exit(1)
 
+    ignored_dirs = {
+        "venv", ".venv", "env", ".env", ".git", ".github", "__pycache__",
+        "cache", "logs", ".pytest_cache", "site-packages", "dist-packages",
+        "node_modules", "models", "tests"
+    }
+
     files_to_analyze: List[Path] = []
     if target.is_file():
         files_to_analyze.append(target)
     else:
-        for ext in LANGUAGE_EXTENSIONS:
-            files_to_analyze.extend(target.rglob(f"*{ext}"))
+        for root, dirs, files in os.walk(target):
+            # Prune ignored directories in-place so os.walk never enters them
+            dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.startswith(".")]
+            for f in files:
+                ext = "." + f.rsplit(".", 1)[-1].lower() if "." in f else ""
+                if ext in LANGUAGE_EXTENSIONS:
+                    files_to_analyze.append(Path(root) / f)
 
     if not files_to_analyze:
         print(f"No supported source code files found in '{args.path}'.", file=sys.stderr)
@@ -218,9 +240,6 @@ def main():
     failed_security = False
 
     for file_p in files_to_analyze:
-        # Skip venv, cache, git directories
-        if any(part in file_p.parts for part in ("venv", ".git", "__pycache__", "cache", "logs")):
-            continue
         res = analyze_single_file(file_p, language=args.language)
         results.append(res)
 

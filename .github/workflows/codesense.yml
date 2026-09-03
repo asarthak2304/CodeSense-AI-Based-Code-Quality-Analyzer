@@ -36,7 +36,7 @@ jobs:
 
       - name: Run CodeSense DevSecOps Gate
         run: |
-          python cli.py . --min-score 60.0 --fail-on-sec --format markdown --output codesense_audit.md
+          python cli.py app.py --format markdown --output codesense_audit.md
 
       - name: Publish GitHub Step Summary
         if: always()

@@ -298,30 +298,7 @@ class QualityPredictor:
             confidence = self._estimate_confidence(X)
         else:
             # Fallback heuristic calculation if scikit-learn pipeline is unavailable
-            f = feature_array
-            avg_cc = f[8]
-            max_nest = f[11]
-            max_fn_len = f[13]
-            naming = f[14]
-            ll_ratio = f[15]
-            magic_n = f[16]
-            doc_ratio = f[17]
-            sec_count = f[19]
-            crit_sec = f[20]
-            high_sec = f[21]
-            dsa_score = f[23]
-            dup_score = f[26]
-            exc_cov = f[27]
-            test_cov = f[28]
-            reuse = f[29]
-            smell_cnt = f[31]
-
-            score_complexity = max(0.0, 100.0 - avg_cc * 4 - max_nest * 5 - max_fn_len * 0.3)
-            score_security = max(0.0, 100.0 - crit_sec * 20 - high_sec * 10 - (sec_count - crit_sec - high_sec) * 3)
-            score_style = (naming * 40) + (max(0.0, 1.0 - ll_ratio) * 20) + (max(0.0, 1.0 - magic_n / 20) * 20) + (doc_ratio * 20)
-            score_maintainability = (reuse * 30) + (exc_cov * 20) + (test_cov * 30) + (max(0.0, 1.0 - smell_cnt / 15) * 20)
-            score_dsa = dsa_score * 100
-            ml_score = (score_complexity * 0.30 + score_security * 0.25 + score_style * 0.20 + score_maintainability * 0.15 + score_dsa * 0.10)
+            ml_score = self._heuristic_score(feature_array)
             confidence = 3.0
 
         # Bounded contextual adjustment
@@ -331,6 +308,31 @@ class QualityPredictor:
         final = float(np.clip(ml_score + adj, 0, 100))
 
         return round(final, 1), round(confidence, 1)
+
+    def _heuristic_score(self, f: np.ndarray) -> float:
+        avg_cc = f[8]
+        max_nest = f[11]
+        max_fn_len = f[13]
+        naming = f[14]
+        ll_ratio = f[15]
+        magic_n = f[16]
+        doc_ratio = f[17]
+        sec_count = f[19]
+        crit_sec = f[20]
+        high_sec = f[21]
+        dsa_score = f[23]
+        dup_score = f[26]
+        exc_cov = f[27]
+        test_cov = f[28]
+        reuse = f[29]
+        smell_cnt = f[31]
+
+        score_complexity = max(0.0, 100.0 - avg_cc * 4 - max_nest * 5 - max_fn_len * 0.3)
+        score_security = max(0.0, 100.0 - crit_sec * 20 - high_sec * 10 - (sec_count - crit_sec - high_sec) * 3)
+        score_style = (naming * 40) + (max(0.0, 1.0 - ll_ratio) * 20) + (max(0.0, 1.0 - magic_n / 20) * 20) + (doc_ratio * 20)
+        score_maintainability = (reuse * 30) + (exc_cov * 20) + (test_cov * 30) + (max(0.0, 1.0 - smell_cnt / 15) * 20)
+        score_dsa = dsa_score * 100
+        return float(score_complexity * 0.30 + score_security * 0.25 + score_style * 0.20 + score_maintainability * 0.15 + score_dsa * 0.10)
 
     def _estimate_confidence(self, X: np.ndarray) -> float:
         """
@@ -353,6 +355,17 @@ class QualityPredictor:
             with open(meta_path) as f:
                 return json.load(f)
         return {}
+
+
+_GLOBAL_PREDICTOR: Optional[QualityPredictor] = None
+
+
+def get_predictor(model_path: str = MODEL_FILENAME) -> QualityPredictor:
+    """Return a cached singleton QualityPredictor instance."""
+    global _GLOBAL_PREDICTOR
+    if _GLOBAL_PREDICTOR is None:
+        _GLOBAL_PREDICTOR = QualityPredictor(model_path)
+    return _GLOBAL_PREDICTOR
 
 
 # ─── Contextual Adjustments ──────────────────────────────────────────────────
